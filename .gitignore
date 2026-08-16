@@ -1,0 +1,14 @@
+# Generated security check outputs
+KISA_LOG/
+KISA_RESULT/
+KISA_BACKUP/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
