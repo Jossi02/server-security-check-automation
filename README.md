@@ -57,7 +57,7 @@ CI는 실제 시스템 설정을 변경하지 않습니다. 정적 검사와 fix
 코드를 먼저 읽은 뒤 테스트 VM에서 실행하세요.
 
 ```bash
-sudo ./linux/U-52.sh
+sudo bash ./linux/U-52.sh
 ```
 
 ```powershell
