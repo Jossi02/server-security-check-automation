@@ -44,8 +44,8 @@ docs/PROJECT_NOTES.md  # 공개 범위와 검증 기록
 | Bash 구문 검사 (`bash -n`) | `linux/*.sh`, `tests/*.sh` | 2026-08-29 통과 |
 | PowerShell parser | `windows/*.ps1`, `tests/*.ps1` | 2026-08-29 통과 |
 | Fixture 테스트 | U-52 UID 탐지, W-50 한/영 파싱 | 2026-08-29 통과 |
-| ShellCheck | Bash 스크립트 | 로컬 미실행; CI에서 실행 |
-| PSScriptAnalyzer | PowerShell 스크립트 | 로컬 미실행; CI에서 실행 |
+| ShellCheck | Bash 스크립트 | 2026-08-29 CI 통과 |
+| PSScriptAnalyzer | PowerShell 스크립트 | 2026-08-29 CI 통과 |
 | Linux 실제 조치 | 계정/권한/FTP 서비스 | 미실행 — disposable VM 필요 |
 | Windows 실제 조치 | 로컬 암호 정책 | 미실행 — disposable VM 필요 |
 | Windows 레지스트리/ACL 변경 | SNMP/Event Log | 공개본은 detect-only; 수동 검증 필요 |
