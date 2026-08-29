@@ -1,0 +1,46 @@
+name: Static and non-destructive checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Bash syntax and ShellCheck
+        run: |
+          bash -n linux/*.sh tests/*.sh
+          shellcheck linux/*.sh tests/*.sh
+
+      - name: Bash fixture tests
+        run: bash tests/run-nondestructive.sh
+
+      - name: PowerShell parser and fixture tests
+        shell: pwsh
+        run: |
+          $errors = foreach ($file in Get-ChildItem windows, tests -Filter *.ps1 -Recurse) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+            $parseErrors
+          }
+          if ($errors) { $errors | Format-List; exit 1 }
+          ./tests/Test-W50Parser.ps1
+
+      - name: PSScriptAnalyzer (report warnings, fail on errors)
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          $findings = foreach ($path in 'windows', 'tests') {
+            Invoke-ScriptAnalyzer -Path $path -Recurse
+          }
+          # Keep every finding visible. Interactive CLI scripts intentionally use Write-Host.
+          # Warnings are reported but only Error-level findings fail this job.
+          $findings | Format-Table
+          if ($findings | Where-Object Severity -eq Error) { exit 1 }

@@ -1,157 +1,89 @@
-﻿$OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-$dir = $PSScriptRoot
-$log_dir = Join-Path $dir "KISA_LOG"
-$result_dir = Join-Path $dir "KISA_RESULT"
-$backup_dir = Join-Path $dir "KISA_BACKUP"
+$logDir = Join-Path $PSScriptRoot 'KISA_LOG'
+$resultDir = Join-Path $PSScriptRoot 'KISA_RESULT'
+New-Item -ItemType Directory -Force -Path $logDir, $resultDir | Out-Null
 
-# 디렉터리 생성
-New-Item -ItemType Directory -Force -Path $log_dir, $result_dir, $backup_dir | Out-Null
-
-$log_file = Join-Path $log_dir "W-71.log"
-$json_file = Join-Path $result_dir "W-71.json"
-
-$detect_status = "FAIL"
-$remediate_status = "FAIL"
-$ts = Get-Date -Format "yyyy-MM-dd HH:mm:ssK"
-$detect_msg = ""
-$remediate_msg = ""
-$target_path = "$env:SystemRoot\System32\config"
+$logFile = Join-Path $logDir 'W-71.log'
+$jsonFile = Join-Path $resultDir 'W-71.json'
+$targetPath = Join-Path $env:SystemRoot 'System32\config'
+$detectStatus = 'ERROR'
+$remediateStatus = 'NOT_APPLICABLE'
+$detectMessage = ''
+$riskyAllowCount = 0
+$ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ssK'
+$transcriptStarted = $false
 
 try {
-    Start-Transcript -Path $log_file -Append
-    Write-Host "========= [W-71] Remote Event Log Access Block =========" -ForegroundColor Cyan
-    Write-Host "[$ts]"
+    Start-Transcript -Path $logFile -Append | Out-Null
+    $transcriptStarted = $true
+    Write-Host '========= [W-71] Event Log File Access Check =========' -ForegroundColor Cyan
+    Write-Host '[INFO] Historical control W-71; current guide mapping: W-43'
 
-    # --- Step 1. 탐지 (Detect) ---
-    Write-Host "Step 1: Checking Access Permissions for: $target_path" -ForegroundColor Cyan
+    if (-not (Test-Path -LiteralPath $targetPath)) {
+        $detectMessage = "Target directory was not found: $targetPath"
+    }
+    else {
+        try {
+            $acl = Get-Acl -LiteralPath $targetPath -ErrorAction Stop
+            $everyoneSid = 'S-1-1-0'
+            $writeMask = [int][System.Security.AccessControl.FileSystemRights]::WriteData -bor
+                [int][System.Security.AccessControl.FileSystemRights]::AppendData -bor
+                [int][System.Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+                [int][System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+                [int][System.Security.AccessControl.FileSystemRights]::Delete -bor
+                [int][System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+                [int][System.Security.AccessControl.FileSystemRights]::TakeOwnership
 
-    if (Test-Path $target_path) {
-        $acl = Get-Acl -Path $target_path
-        
-        # 'Everyone' 권한 필터링
-        $vulnerable = $acl.Access | Where-Object { 
-            $_.IdentityReference -like "*Everyone*" -or $_.IdentityReference.Value -eq "Everyone" 
+            $riskyRules = @($acl.Access | Where-Object {
+                try {
+                    $sid = $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+                }
+                catch {
+                    $sid = $_.IdentityReference.Value
+                }
+                $sid -eq $everyoneSid -and
+                    $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+                    (([int]$_.FileSystemRights -band $writeMask) -ne 0)
+            })
+            $riskyAllowCount = $riskyRules.Count
+
+            if ($riskyAllowCount -gt 0) {
+                $detectStatus = 'FAIL'
+                $detectMessage = "$riskyAllowCount Everyone Allow ACE(s) grant write-sensitive rights."
+            }
+            else {
+                $detectStatus = 'PASS'
+                $detectMessage = 'No Everyone Allow ACE grants write-sensitive rights on the inspected directory.'
+            }
         }
-
-        if ($vulnerable) {
-            $detect_status = "FAIL"
-            $detect_msg = "Vulnerability Detected: 'Everyone' permission exists."
-            Write-Host "[INFO] $detect_msg" -ForegroundColor Red
-        } else {
-            $detect_status = "PASS"
-            $detect_msg = "Secure: No 'Everyone' permission found."
-            Write-Host "[INFO] $detect_msg" -ForegroundColor Green
+        catch {
+            $detectMessage = "ACL could not be read: $($_.Exception.Message)"
         }
-    } else {
-        $detect_status = "ERROR"
-        $detect_msg = "Target directory not found."
-        Write-Host "[ERROR] $detect_msg" -ForegroundColor Red
     }
 
-    Write-Host "--------- Detect Result ---------"
-    Write-Host "[RESULT] Status: $detect_status" -ForegroundColor Cyan
-    Write-Host "---------------------------------"
-
-    # --- Step 2. 조치 (Remediate) ---
-    if ($detect_status -eq "FAIL") {
-        
-        # 사용자 입력 받기
-        Write-Host -NoNewline "[QUESTION] Vulnerability found. Do you want to automatically fix it? (y/n): " -ForegroundColor Yellow
-        $user_input = Read-Host
-
-        if ($user_input -eq 'y' -or $user_input -eq 'Y') {
-            Write-Host "[INFO] Starting Remediation..." -ForegroundColor Yellow
-            
-            $backup_file = Join-Path $backup_dir "W-71_ACL_Backup_$((Get-Date).ToString('yyyyMMddHHmmss')).txt"
-            
-            try {
-                # 2.1 백업 (Backup)
-                $sddl = $acl.GetSecurityDescriptorSddlForm("All")
-                $sddl | Out-File -FilePath $backup_file -Encoding UTF8
-                Write-Host "[BACKUP] ACL backed up to: $backup_file" -ForegroundColor Gray
-                
-                # 2.2 제거 (Remove)
-                Write-Host "[FIX] Removing 'Everyone' permission from ACL..." -ForegroundColor Yellow
-                
-                foreach ($rule in $vulnerable) {
-                    $acl.RemoveAccessRule($rule) | Out-Null
-                }
-                # 2.3 적용 (Commit)
-                Set-Acl -Path $target_path -AclObject $acl
-                
-                # 재검증 (Verification)
-                $new_acl = Get-Acl -Path $target_path
-                if (!($new_acl.Access | Where-Object { $_.IdentityReference -like "*Everyone*" })) {
-                    $remediate_status = "PASS"
-                    $remediate_msg = "Successfully removed 'Everyone' permission."
-                    Write-Host "[RESULT] Remediation Successful." -ForegroundColor Green
-                } else {
-                    throw "Verification failed. 'Everyone' permission still exists."
-                }
-            }
-            catch {
-                $remediate_msg = "Error during fix: $($_.Exception.Message)"
-                Write-Host "[ERROR] Remediation Failed." -ForegroundColor Red
-            }
-        } else {
-            # 사용자가 n을 입력한 경우
-            Write-Host "[INFO] Remediation skipped by user." -ForegroundColor Yellow
-            $remediate_status = "SKIPPED"
-            $remediate_msg = "Skipped by user"
-        }
-    } else {
-        $remediate_status = "PASS"
-        $remediate_msg = "No change required."
-        Write-Host "[RESULT] No change required." -ForegroundColor Cyan
+    if ($detectStatus -eq 'FAIL') {
+        $remediateStatus = 'MANUAL_REQUIRED'
+        Write-Host '[MANUAL] Review inheritance, Allow/Deny ordering, and effective access in a disposable VM before changing this ACL.' -ForegroundColor Yellow
+        Write-Host '[WARNING] No ACL was changed and no automatic rollback is claimed.' -ForegroundColor Yellow
     }
-
-    # --- JSON 리포트 생성 ---
-    $discussion = @"
-Good: 'Everyone' permission is NOT present in Log directory.
-Vulnerable: 'Everyone' permission IS present in Log directory.
-"@
-    $check_content = @"
-Check ACL of $target_path for 'Everyone' group.
-"@
 
     $result = [PSCustomObject]@{
         date = $ts
-        control_family = "W-71"
-        check_target = "Restrict Remote Access to Event Logs"
-        discussion = $discussion
-        check_content = $check_content
-        fix_text = "Remove 'Everyone' from System32\config directory permissions."
-        payload = [PSCustomObject]@{
-            severity = "Medium"
-            port = ""
-            service = "EventLog"
-            protocol = ""
-            threat = @("Indicator Removal", "Defense Evasion")
-            TTP = @("T1070", "T1562")
-            file_checked = $target_path
-        }
+        control_family = 'W-71'
+        current_mapping = 'W-43'
+        check_target = 'Event Log File Access Restriction'
+        scope_limit = 'Inspects Everyone Allow ACEs with write-sensitive rights on System32\config; it does not calculate full effective access for every principal.'
         results = @(
-            [PSCustomObject]@{
-                phase = "detect"
-                status = $detect_status
-                msg = $detect_msg
-            },
-            [PSCustomObject]@{
-                phase = "remediate"
-                status = $remediate_status
-                msg = $remediate_msg
-                # 백업 파일은 실제 조치가 수행된 경우에만 기록
-                backup = if ($detect_status -eq "FAIL" -and $remediate_status -ne "SKIPPED") { $backup_file } else { "N/A" }
-            }
+            [PSCustomObject]@{ phase = 'detect'; status = $detectStatus; risky_everyone_allow_count = $riskyAllowCount; msg = $detectMessage },
+            [PSCustomObject]@{ phase = 'remediate'; status = $remediateStatus; changed = $false; msg = 'Manual remediation only.' }
         )
     }
-
-    $result | ConvertTo-Json -Depth 4 | Set-Content -Path $json_file -Encoding UTF8
-
-    Write-Host "[INFO] Script execution finished. Result saved to $json_file" -ForegroundColor Cyan
+    $result | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $jsonFile -Encoding UTF8
+    Write-Host "[RESULT] Detect status: $detectStatus ($detectMessage)"
+    Write-Host "[RESULT] Remediation status: $remediateStatus"
 }
 finally {
-    Stop-Transcript | Out-Null
+    if ($transcriptStarted) { Stop-Transcript | Out-Null }
 }
