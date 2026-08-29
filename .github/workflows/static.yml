@@ -33,12 +33,14 @@ jobs:
           if ($errors) { $errors | Format-List; exit 1 }
           ./tests/Test-W50Parser.ps1
 
-      - name: PSScriptAnalyzer
+      - name: PSScriptAnalyzer (report warnings, fail on errors)
         shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
           $findings = foreach ($path in 'windows', 'tests') {
             Invoke-ScriptAnalyzer -Path $path -Recurse
           }
+          # Keep every finding visible. Interactive CLI scripts intentionally use Write-Host.
+          # Warnings are reported but only Error-level findings fail this job.
           $findings | Format-Table
           if ($findings | Where-Object Severity -eq Error) { exit 1 }
