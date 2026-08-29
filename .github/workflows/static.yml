@@ -11,7 +11,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Bash syntax and ShellCheck
         run: |
@@ -37,6 +37,8 @@ jobs:
         shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
-          $findings = Invoke-ScriptAnalyzer -Path windows, tests -Recurse
+          $findings = foreach ($path in 'windows', 'tests') {
+            Invoke-ScriptAnalyzer -Path $path -Recurse
+          }
           $findings | Format-Table
           if ($findings | Where-Object Severity -eq Error) { exit 1 }
